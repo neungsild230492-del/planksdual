@@ -17,7 +17,7 @@ n();})();
    - 운 요소 0 · 모든 조건 대칭 · 오직 실력
    - 로컬 2인 / 봇 연습 / 방 코드 온라인 (락스텝 동기화)
    ========================================================= */
-const BUILD='pvp-2.2';
+const BUILD='pvp-2.3';
 const W=960,H=540,FLOOR=440;
 const FONT='system-ui,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif';
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
@@ -178,11 +178,13 @@ const WP=[
   {n:'박격포',cd:50,sp:8,r:8,life:150,dmg:30,g:.28},
   {n:'저격총',cd:40,sp:21,r:4,life:45,dmg:22,g:0,k:4},
   {n:'화염방사기',cd:4,sp:6.5,r:7,life:15,dmg:2,g:0,k:5},
-  {n:'바운스건',cd:24,sp:9,r:6,life:110,dmg:13,g:0,k:6}];
+  {n:'바운스건',cd:30,sp:9,r:6,life:85,dmg:10,g:0,k:6}];
 const MAPS=[
   {n:'책상 위',pl:[[90,345,200],[380,265,200],[670,345,200]]},
   {n:'서랍 계단',pl:[[150,350,150],[400,255,160],[660,350,150]]},
-  {n:'평지',pl:[]}];
+  {n:'평지',pl:[]},
+  {n:'높은 탑',pl:[[100,340,160],[700,340,160],[400,350,160],[420,245,120]]},
+  {n:'지그재그',pl:[[60,360,140],[760,360,140],[250,290,120],[590,290,120],[400,200,160]]}];
 const B_L=1,B_R=2,B_U=4,B_D=8,B_J=16,B_S=32,B_DA=64,B_LK=128,B_EX=256,B_PA=512;
 
 function mkP(i,w){return{i,w,x:i?790:170,y:PV.FLOOR,vx:0,vy:0,face:i?-1:1,ax:i?-1:1,ay:0,hp:PV.HP,ex:0,cd:0,
@@ -350,7 +352,7 @@ function stepB(S){
       if(!land&&u.vy>0){for(let i=0;i<pls.length;i++){const pl=pls[i];if(u.x>pl[0]&&u.x<pl[0]+pl[2]&&oy+u.r<=pl[1]&&u.y+u.r>=pl[1]){land=true;break;}}}
       if(land){explode(S,u,false);u.dead=1;}
     }
-    if(u.k===6&&!u.dead&&u.bn<4){
+    if(u.k===6&&!u.dead&&u.bn<3){
       if(u.x<8&&u.vx<0){u.x=8;u.vx=-u.vx;u.bn++;}
       else if(u.x>952&&u.vx>0){u.x=952;u.vx=-u.vx;u.bn++;}
       if(u.vy>0){
@@ -1017,7 +1019,7 @@ function drawMenu(){
   btn(24,474,52,46,'',()=>{APP.showHelp=true;},{icon:'help',col:'#f1d9a8',dark:'#c9ae78',r:12});
   btn(86,474,52,46,'',()=>{muted=!muted;},{icon:muted?'mute':'sound',col:'#f1d9a8',dark:'#c9ae78',r:12});
   if(canFS)btn(W-76,474,52,46,'',toggleFS,{icon:'full',col:'#f1d9a8',dark:'#c9ae78',r:12});
-  txt('v2.2 · 랜덤 없음 · 모든 조건 대칭',W/2,H-20,13,'#f7e3bd');
+  txt('v2.3 · 랜덤 없음 · 모든 조건 대칭',W/2,H-20,13,'#f7e3bd');
   if(APP.showHelp)drawHelp();
 }
 function drawHelp(){
@@ -1111,10 +1113,10 @@ function drawLobby(){
     txt(WDESC[APP.cfg.w[s]],x+w/2+30,y+180,12,'#5a3a1e');
   }
   // 맵 · 승리 조건 · 봇 난이도
-  txt('맵',40,358,12,'#5a3a1e','left','800');
-  for(let i=0;i<3;i++){const x=40+i*118;
-    btn(x,366,108,44,'',()=>setMap(i),{sel:APP.cfg.map===i,col:APP.cfg.map===i?'#ffe9b8':'#ead0a0',dark:'#b98448',r:10,lip:4});
-    miniMap(i,x+6,370,46,36);txt(MAPS[i].n,x+82,388,13,'#3b2210');}
+  txt('맵 · '+MAPS[APP.cfg.map].n,40,358,12,'#5a3a1e','left','800');
+  for(let i=0;i<MAPS.length;i++){const x=40+i*72;
+    btn(x,366,66,44,'',()=>setMap(i),{sel:APP.cfg.map===i,col:APP.cfg.map===i?'#ffe9b8':'#ead0a0',dark:'#b98448',r:10,lip:4});
+    miniMap(i,x+6,370,54,36);}
   txt('승리 조건',410,358,12,'#5a3a1e','left','800');
   btn(410,366,140,44,'3판 2선승',()=>setBo(2),{size:16,sel:APP.cfg.bo===2,col:APP.cfg.bo===2?'#ffe9b8':'#ead0a0',dark:'#b98448',r:10,lip:4});
   btn(560,366,140,44,'5판 3선승',()=>setBo(3),{size:16,sel:APP.cfg.bo===3,col:APP.cfg.bo===3?'#ffe9b8':'#ead0a0',dark:'#b98448',r:10,lip:4});
