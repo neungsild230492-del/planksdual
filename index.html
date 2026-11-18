@@ -17,7 +17,7 @@ n();})();
    - 운 요소 0 · 모든 조건 대칭 · 오직 실력
    - 로컬 2인 / 봇 연습 / 방 코드 온라인 (락스텝 동기화)
    ========================================================= */
-const BUILD='pvp-2.9';
+const BUILD='pvp-2.10';
 const W=960,H=540,FLOOR=440;
 const FONT='system-ui,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif';
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
@@ -99,47 +99,56 @@ function tLayout(){
     {k:'ex',b:BIT.EX,x:SW-49*u,y:SH-24*u,r:7*u,l:'EX'},{k:'lock',b:BIT.LK,x:OX+(W-52)*SC,y:OY+140*SC,r:19*SC,l:'고정'}]};
 }
 /* ---------- 브롤스타즈식 조준: 끌어서 방향 잡고 → 놓으면 발사 ---------- */
-const AIM={ptr:null,idx:0,drag:false,was:false,keep:0,hold:0,pulse:0,mouse:false,mode:0};
+const AIM={ptr:null,idx:0,ang:null,drag:false,was:false,keep:0,hold:0,pulse:0,mouse:false,mode:0};
 try{AIM.mode=localStorage.getItem('aimMode')==='1'?1:0;}catch(_){}
 function setAimMode(m){AIM.mode=m?1:0;try{localStorage.setItem('aimMode',String(AIM.mode));}catch(_){}}
 const AIM_HOLD=[14,0,0,0,30,0,0,0,0,0];     // 놓았을 때 연속 사격 틱 수 (피스톨 2발, 화염 5번)
 const mySlot=()=>APP.mode==='guest'?1:0;
-function aimReset(){AIM.ptr=null;AIM.idx=0;AIM.drag=false;AIM.was=false;AIM.keep=0;AIM.hold=0;AIM.pulse=0;AIM.mouse=false;}
-function idxOf(dx,dy){let n=Math.round(Math.atan2(dy,dx)/(Math.PI*2)*64);return ((n%64)+64)%64;}
-// 자동 조준: 움직이는 상대를 예측해서 겨눔 · 포물선 무기는 맞는 각도를 계산
-function smartIdx(){
+function aimReset(){AIM.ptr=null;AIM.ang=null;AIM.idx=0;AIM.drag=false;AIM.was=false;AIM.keep=0;AIM.hold=0;AIM.pulse=0;AIM.mouse=false;}
+const AIMN=256,TAU=Math.PI*2;
+const idxFromAng=a=>((Math.round(a/TAU*AIMN)%AIMN)+AIMN)%AIMN;
+function idxOf(dx,dy){return idxFromAng(Math.atan2(dy,dx));}
+function lerpAng(a,b,k){let d=b-a;while(d>Math.PI)d-=TAU;while(d<-Math.PI)d+=TAU;return a+d*k;}
+// 자동 조준: 움직이는 상대를 예측해서 겨눔 · 포물선 무기는 맞는 각도를 계산 (라디안)
+function smartAng(){
   const S=APP.S;if(!S)return 0;const me=S.p[mySlot()],o=S.p[1-mySlot()],w=me.w;
   const mx=me.x,my=me.y-30;let tx=o.x,ty=o.y-23;
   if(w===2||w===8){
     const sp=WP[w].sp;let best=0,bd=1e9;
-    for(let i=0;i<64;i++){
+    for(let i=0;i<AIMN;i+=2){
       let x=mx+AIMX[i]*26,y=my+AIMY[i]*26,vx=AIMX[i]*sp,vy=AIMY[i]*sp-2.5;
       for(let t=0;t<200;t++){x+=vx;y+=vy;vy+=.28;if(vy>0&&y>=ty){const tt=clamp(o.x+clamp(o.vx,-6,6)*(t+1)*.9,14,946),d=Math.abs(x-tt);if(d<bd){bd=d;best=i;}break;}if(y>FLOOR+30)break;}
     }
-    if(bd<1e8)return best;
+    if(bd<1e8)return best/AIMN*TAU;
   }
   const sp=w===3?21:(w===7?9:(WP[w].sp||12));
   for(let k=0;k<2;k++){const dd=Math.hypot(tx-mx,ty-my),t=dd/sp;tx=o.x+clamp(o.vx,-6,6)*t*.9;if(tx<14)tx=14;if(tx>946)tx=946;}
-  return idxOf(tx-mx,ty-my);
+  return Math.atan2(ty-my,tx-mx);
 }
-function autoIdx(){return smartIdx();}
-function mouseAimIdx(o){   // 마우스: 내 캐릭터 → 커서 방향
-  const S=APP.S;if(!S)return AIM.idx;const me=S.p[mySlot()];
-  const lx=(o.x-OX)/SC,ly=(o.y-OY)/SC,dx=lx-me.x,dy=ly-(me.y-30);
-  AIM.drag=dx*dx+dy*dy>24*24;return AIM.drag?idxOf(dx,dy):autoIdx();
+// 지금 가리키는 목표 각도 (조준 중이 아니면 null)
+function tgtAng(){
+  if(AIM.ptr===null)return null;const o=tp.get(AIM.ptr);if(!o)return null;
+  const S=APP.S;if(!S)return null;
+  if(o.z==='maim'){
+    const me=S.p[mySlot()],lx=(o.x-OX)/SC,ly=(o.y-OY)/SC,dx=lx-me.x,dy=ly-(me.y-30);
+    AIM.drag=dx*dx+dy*dy>24*24;return AIM.drag?Math.atan2(dy,dx):smartAng();
+  }
+  if(AIM.drag)return Math.atan2(o.y-o.oy,o.x-o.ox);
+  return smartAng();
 }
-function aimLive(){   // 지금 조준 중인 방향 (없으면 -1)
-  if(AIM.ptr===null)return -1;const o=tp.get(AIM.ptr);if(!o)return -1;
-  if(o.z==='maim')return mouseAimIdx(o);
-  return AIM.drag?AIM.idx:autoIdx();
+// 화면 프레임마다 호출: 조준 각도를 부드럽게 따라가게 함 (끊김·떨림 완화)
+function updateAim(dt){
+  const t=tgtAng();if(t===null)return;
+  if(AIM.ang===null)AIM.ang=t;else AIM.ang=lerpAng(AIM.ang,t,1-Math.exp(-dt*22));
+  AIM.idx=idxFromAng(AIM.ang);
 }
+function aimLive(){return AIM.ptr!==null&&AIM.ang!==null?idxFromAng(AIM.ang):-1;}   // 지금 조준 중인 방향 (없으면 -1)
 function finishAim(o){
   const S=APP.S;const w=S?S.p[mySlot()].w:0;
-  let idx=AIM.idx;
-  if(o.z==='aim'&&AIM.was&&!AIM.drag&&w!==3){AIM.ptr=null;AIM.keep=0;AIM.was=false;return;}   // 끌었다가 중앙으로 되돌리면 발사 취소
-  if(o.z==='maim')idx=mouseAimIdx(o);else idx=AIM.drag?AIM.idx:autoIdx();
-  const held=AIM.mode===1&&(AIM.drag||o.z==='maim'&&AIM.drag);     // 연사 모드로 쏘고 있었으면 놓을 때 추가 발사 없음
-  AIM.idx=idx;AIM.ptr=null;AIM.keep=40;AIM.was=false;
+  if(o.z==='aim'&&AIM.was&&!AIM.drag&&w!==3){AIM.ptr=null;AIM.keep=0;AIM.was=false;AIM.ang=null;return;}   // 끌었다가 중앙으로 되돌리면 발사 취소
+  const t=tgtAng();if(t!==null)AIM.ang=t;           // 놓는 순간은 손가락이 가리킨 방향으로 정확히 (지연 없음)
+  const held=AIM.mode===1&&AIM.drag;                  // 연사 모드로 쏘고 있었으면 놓을 때 추가 발사 없음
+  AIM.idx=AIM.ang===null?AIM.idx:idxFromAng(AIM.ang);AIM.ptr=null;AIM.keep=40;AIM.was=false;
   if(w!==3&&!held){AIM.pulse=1;AIM.hold=AIM_HOLD[w]||0;try{if(navigator.vibrate&&o.z==='aim')navigator.vibrate(12);}catch(_){}}
 }
 function aimBits(){
@@ -156,7 +165,7 @@ function updateTouchBits(){
   touchBits=0;const L=tLayout();
   for(const o of tp.values()){
     if(o.z==='aim'){const R=L.btns[0].r*1.45,dx=o.x-o.ox,dy=o.y-o.oy;
-      if(dx*dx+dy*dy>(R*.3)*(R*.3)){AIM.drag=true;AIM.was=true;AIM.idx=idxOf(dx,dy);}else AIM.drag=false;continue;}
+      if(dx*dx+dy*dy>(R*.3)*(R*.3)){AIM.drag=true;AIM.was=true;}else AIM.drag=false;continue;}
     if(o.z==='maim')continue;
     if(o.z==='stick'){const dx=(o.x-o.ox)/L.stick.r,dy=(o.y-o.oy)/L.stick.r;
       if(dx<-.35)touchBits|=BIT.L;if(dx>.35)touchBits|=BIT.R;if(dy<-.4)touchBits|=BIT.U;if(dy>.4)touchBits|=BIT.D;}
@@ -210,12 +219,12 @@ cv.addEventListener('pointerdown',e=>{
     const L=tLayout();let z=null,ox=0,oy=0;
     if(sx<SW*.4&&sy>SH*.3){z='stick';const near=dist(sx,sy,L.stick.x,L.stick.y)<L.stick.r*1.4;ox=near?L.stick.x:sx;oy=near?L.stick.y:sy;}
     else for(const b of L.btns){
-      if(b.k==='shoot'){if(dist(sx,sy,b.x,b.y)<b.r*1.35){z='aim';ox=b.x;oy=b.y;AIM.ptr=e.pointerId;AIM.drag=false;AIM.was=false;AIM.keep=0;AIM.hold=0;AIM.pulse=0;break;}continue;}
+      if(b.k==='shoot'){if(dist(sx,sy,b.x,b.y)<b.r*1.35){z='aim';ox=b.x;oy=b.y;AIM.ptr=e.pointerId;AIM.drag=false;AIM.was=false;AIM.ang=null;AIM.keep=0;AIM.hold=0;AIM.pulse=0;break;}continue;}
       if(dist(sx,sy,b.x,b.y)<b.r*1.3){z=b.b;tlatch.v=(tlatch.v|0)|b.b;break;}
     }
     tp.set(e.pointerId,{x:sx,y:sy,z,ox,oy});updateTouchBits();try{cv.setPointerCapture(e.pointerId);}catch(_){}
   }else if(APP.scene==='play'&&!PTR.touch&&e.button===0&&!APP.paused&&!APP.oppLeft&&APP.S){   // 마우스: 누른 채 조준 → 떼면 발사
-    tp.set(e.pointerId,{x:sx,y:sy,z:'maim',ox:0,oy:0});AIM.ptr=e.pointerId;AIM.mouse=true;AIM.drag=false;AIM.was=false;AIM.keep=0;AIM.hold=0;AIM.pulse=0;
+    tp.set(e.pointerId,{x:sx,y:sy,z:'maim',ox:0,oy:0});AIM.ptr=e.pointerId;AIM.mouse=true;AIM.drag=false;AIM.was=false;AIM.ang=null;AIM.keep=0;AIM.hold=0;AIM.pulse=0;
     try{cv.setPointerCapture(e.pointerId);}catch(_){}
   }
 });
@@ -274,8 +283,8 @@ function buildPl(S){
   }
   S.pl=out;S.pdx=dx;
 }
-// 아날로그 조준: 64방향 (5.625° 단위, 고정 상수라 결정론 유지)
-const AIMX=[1,0.9952,0.9808,0.9569,0.9239,0.8819,0.8315,0.773,0.7071,0.6344,0.5556,0.4714,0.3827,0.2903,0.1951,0.098,0,-0.098,-0.1951,-0.2903,-0.3827,-0.4714,-0.5556,-0.6344,-0.7071,-0.773,-0.8315,-0.8819,-0.9239,-0.9569,-0.9808,-0.9952,-1,-0.9952,-0.9808,-0.9569,-0.9239,-0.8819,-0.8315,-0.773,-0.7071,-0.6344,-0.5556,-0.4714,-0.3827,-0.2903,-0.1951,-0.098,0,0.098,0.1951,0.2903,0.3827,0.4714,0.5556,0.6344,0.7071,0.773,0.8315,0.8819,0.9239,0.9569,0.9808,0.9952],AIMY=[0,0.098,0.1951,0.2903,0.3827,0.4714,0.5556,0.6344,0.7071,0.773,0.8315,0.8819,0.9239,0.9569,0.9808,0.9952,1,0.9952,0.9808,0.9569,0.9239,0.8819,0.8315,0.773,0.7071,0.6344,0.5556,0.4714,0.3827,0.2903,0.1951,0.098,0,-0.098,-0.1951,-0.2903,-0.3827,-0.4714,-0.5556,-0.6344,-0.7071,-0.773,-0.8315,-0.8819,-0.9239,-0.9569,-0.9808,-0.9952,-1,-0.9952,-0.9808,-0.9569,-0.9239,-0.8819,-0.8315,-0.773,-0.7071,-0.6344,-0.5556,-0.4714,-0.3827,-0.2903,-0.1951,-0.098];
+// 아날로그 조준: 256방향 (약 1.4° 단위, 고정 상수라 결정론 유지)
+const AIMX=[1,0.9997,0.9988,0.9973,0.9952,0.9925,0.9892,0.9853,0.9808,0.9757,0.97,0.9638,0.9569,0.9495,0.9415,0.933,0.9239,0.9142,0.904,0.8932,0.8819,0.8701,0.8577,0.8449,0.8315,0.8176,0.8032,0.7883,0.773,0.7572,0.741,0.7242,0.7071,0.6895,0.6716,0.6532,0.6344,0.6152,0.5957,0.5758,0.5556,0.535,0.5141,0.4929,0.4714,0.4496,0.4276,0.4052,0.3827,0.3599,0.3369,0.3137,0.2903,0.2667,0.243,0.2191,0.1951,0.171,0.1467,0.1224,0.098,0.0736,0.0491,0.0245,0,-0.0245,-0.0491,-0.0736,-0.098,-0.1224,-0.1467,-0.171,-0.1951,-0.2191,-0.243,-0.2667,-0.2903,-0.3137,-0.3369,-0.3599,-0.3827,-0.4052,-0.4276,-0.4496,-0.4714,-0.4929,-0.5141,-0.535,-0.5556,-0.5758,-0.5957,-0.6152,-0.6344,-0.6532,-0.6716,-0.6895,-0.7071,-0.7242,-0.741,-0.7572,-0.773,-0.7883,-0.8032,-0.8176,-0.8315,-0.8449,-0.8577,-0.8701,-0.8819,-0.8932,-0.904,-0.9142,-0.9239,-0.933,-0.9415,-0.9495,-0.9569,-0.9638,-0.97,-0.9757,-0.9808,-0.9853,-0.9892,-0.9925,-0.9952,-0.9973,-0.9988,-0.9997,-1,-0.9997,-0.9988,-0.9973,-0.9952,-0.9925,-0.9892,-0.9853,-0.9808,-0.9757,-0.97,-0.9638,-0.9569,-0.9495,-0.9415,-0.933,-0.9239,-0.9142,-0.904,-0.8932,-0.8819,-0.8701,-0.8577,-0.8449,-0.8315,-0.8176,-0.8032,-0.7883,-0.773,-0.7572,-0.741,-0.7242,-0.7071,-0.6895,-0.6716,-0.6532,-0.6344,-0.6152,-0.5957,-0.5758,-0.5556,-0.535,-0.5141,-0.4929,-0.4714,-0.4496,-0.4276,-0.4052,-0.3827,-0.3599,-0.3369,-0.3137,-0.2903,-0.2667,-0.243,-0.2191,-0.1951,-0.171,-0.1467,-0.1224,-0.098,-0.0736,-0.0491,-0.0245,0,0.0245,0.0491,0.0736,0.098,0.1224,0.1467,0.171,0.1951,0.2191,0.243,0.2667,0.2903,0.3137,0.3369,0.3599,0.3827,0.4052,0.4276,0.4496,0.4714,0.4929,0.5141,0.535,0.5556,0.5758,0.5957,0.6152,0.6344,0.6532,0.6716,0.6895,0.7071,0.7242,0.741,0.7572,0.773,0.7883,0.8032,0.8176,0.8315,0.8449,0.8577,0.8701,0.8819,0.8932,0.904,0.9142,0.9239,0.933,0.9415,0.9495,0.9569,0.9638,0.97,0.9757,0.9808,0.9853,0.9892,0.9925,0.9952,0.9973,0.9988,0.9997],AIMY=[0,0.0245,0.0491,0.0736,0.098,0.1224,0.1467,0.171,0.1951,0.2191,0.243,0.2667,0.2903,0.3137,0.3369,0.3599,0.3827,0.4052,0.4276,0.4496,0.4714,0.4929,0.5141,0.535,0.5556,0.5758,0.5957,0.6152,0.6344,0.6532,0.6716,0.6895,0.7071,0.7242,0.741,0.7572,0.773,0.7883,0.8032,0.8176,0.8315,0.8449,0.8577,0.8701,0.8819,0.8932,0.904,0.9142,0.9239,0.933,0.9415,0.9495,0.9569,0.9638,0.97,0.9757,0.9808,0.9853,0.9892,0.9925,0.9952,0.9973,0.9988,0.9997,1,0.9997,0.9988,0.9973,0.9952,0.9925,0.9892,0.9853,0.9808,0.9757,0.97,0.9638,0.9569,0.9495,0.9415,0.933,0.9239,0.9142,0.904,0.8932,0.8819,0.8701,0.8577,0.8449,0.8315,0.8176,0.8032,0.7883,0.773,0.7572,0.741,0.7242,0.7071,0.6895,0.6716,0.6532,0.6344,0.6152,0.5957,0.5758,0.5556,0.535,0.5141,0.4929,0.4714,0.4496,0.4276,0.4052,0.3827,0.3599,0.3369,0.3137,0.2903,0.2667,0.243,0.2191,0.1951,0.171,0.1467,0.1224,0.098,0.0736,0.0491,0.0245,0,-0.0245,-0.0491,-0.0736,-0.098,-0.1224,-0.1467,-0.171,-0.1951,-0.2191,-0.243,-0.2667,-0.2903,-0.3137,-0.3369,-0.3599,-0.3827,-0.4052,-0.4276,-0.4496,-0.4714,-0.4929,-0.5141,-0.535,-0.5556,-0.5758,-0.5957,-0.6152,-0.6344,-0.6532,-0.6716,-0.6895,-0.7071,-0.7242,-0.741,-0.7572,-0.773,-0.7883,-0.8032,-0.8176,-0.8315,-0.8449,-0.8577,-0.8701,-0.8819,-0.8932,-0.904,-0.9142,-0.9239,-0.933,-0.9415,-0.9495,-0.9569,-0.9638,-0.97,-0.9757,-0.9808,-0.9853,-0.9892,-0.9925,-0.9952,-0.9973,-0.9988,-0.9997,-1,-0.9997,-0.9988,-0.9973,-0.9952,-0.9925,-0.9892,-0.9853,-0.9808,-0.9757,-0.97,-0.9638,-0.9569,-0.9495,-0.9415,-0.933,-0.9239,-0.9142,-0.904,-0.8932,-0.8819,-0.8701,-0.8577,-0.8449,-0.8315,-0.8176,-0.8032,-0.7883,-0.773,-0.7572,-0.741,-0.7242,-0.7071,-0.6895,-0.6716,-0.6532,-0.6344,-0.6152,-0.5957,-0.5758,-0.5556,-0.535,-0.5141,-0.4929,-0.4714,-0.4496,-0.4276,-0.4052,-0.3827,-0.3599,-0.3369,-0.3137,-0.2903,-0.2667,-0.243,-0.2191,-0.1951,-0.171,-0.1467,-0.1224,-0.098,-0.0736,-0.0491,-0.0245];
 const B_L=1,B_R=2,B_U=4,B_D=8,B_J=16,B_S=32,B_DA=64,B_LK=128,B_EX=256,B_PA=512;
 
 function mkP(i,w){return{i,w,x:i?790:170,y:PV.FLOOR,vx:0,vy:0,face:i?-1:1,ax:i?-1:1,ay:0,hp:PV.HP,ex:0,cd:0,
@@ -439,7 +448,7 @@ function stepP(S,p,inb){
   if(!ax&&!ay)ax=p.face;
   if(ax&&ay){ax*=.70710678;ay*=.70710678;}
   p.ax=ax;p.ay=ay;
-  if((inb>>10)&1){const ix=(inb>>11)&63;p.ax=AIMX[ix];p.ay=AIMY[ix];if(p.ax>.1)p.face=1;else if(p.ax<-.1)p.face=-1;}
+  if((inb>>10)&1){const ix=(inb>>11)&255;p.ax=AIMX[ix];p.ay=AIMY[ix];if(p.ax>.1)p.face=1;else if(p.ax<-.1)p.face=-1;}
   if(p.onG&&(p.vx>.5||p.vx<-.5))p.run+=.3;
   if(p.w===3)sniperStep(S,p,SH);
   else if((SH||p.want>0)&&p.cd<=0&&p.pT<=0&&p.dashT<=0){fire(S,p);p.want=0;}
@@ -719,7 +728,7 @@ function lsSend(){if(!LS.hist.length)return;netSend({t:'pi',a:LS.hist[0][0],v:LS
 function lsRecv(m){
   if(!LS.on||!Array.isArray(m.v))return;
   const a=m.a|0;
-  for(let i=0;i<m.v.length&&i<16;i++){const k=a+i;if(k>=LS.tick&&LS.rem[k]===undefined)LS.rem[k]=(m.v[i]|0)&0x1FFFF;}
+  for(let i=0;i<m.v.length&&i<16;i++){const k=a+i;if(k>=LS.tick&&LS.rem[k]===undefined)LS.rem[k]=(m.v[i]|0)&0x7FFFF;}
   LS.lastRecv=performance.now();
 }
 function lsCheck(m){
@@ -1312,7 +1321,7 @@ function drawMenu(){
   btn(24,474,52,46,'',()=>{APP.showHelp=true;},{icon:'help',col:'#f1d9a8',dark:'#c9ae78',r:12});
   btn(86,474,52,46,'',()=>{muted=!muted;},{icon:muted?'mute':'sound',col:'#f1d9a8',dark:'#c9ae78',r:12});
   if(canFS)btn(W-76,474,52,46,'',toggleFS,{icon:'full',col:'#f1d9a8',dark:'#c9ae78',r:12});
-  txt('v2.9 · 랜덤 없음 · 모든 조건 대칭',W/2,H-20,13,'#f7e3bd');
+  txt('v2.10 · 랜덤 없음 · 모든 조건 대칭',W/2,H-20,13,'#f7e3bd');
   if(APP.showHelp)drawHelp();
 }
 function drawHelp(){
@@ -1516,7 +1525,7 @@ function localPump(dt){
   }
 }
 function update(dt){
-  ANIM+=dt;updateFx(dt);
+  ANIM+=dt;updateFx(dt);updateAim(dt);
   if(APP.leaveArm>0)APP.leaveArm=Math.max(0,APP.leaveArm-dt);
   const S=APP.S;
   if(S&&(APP.scene==='play')&&!APP.paused&&!APP.oppLeft){
