@@ -17,7 +17,7 @@ n();})();
    - 운 요소 0 · 모든 조건 대칭 · 오직 실력
    - 로컬 2인 / 봇 연습 / 방 코드 온라인 (락스텝 동기화)
    ========================================================= */
-const BUILD='pvp-2.8';
+const BUILD='pvp-2.9';
 const W=960,H=540,FLOOR=440;
 const FONT='system-ui,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif';
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
@@ -99,17 +99,30 @@ function tLayout(){
     {k:'ex',b:BIT.EX,x:SW-49*u,y:SH-24*u,r:7*u,l:'EX'},{k:'lock',b:BIT.LK,x:OX+(W-52)*SC,y:OY+140*SC,r:19*SC,l:'고정'}]};
 }
 /* ---------- 브롤스타즈식 조준: 끌어서 방향 잡고 → 놓으면 발사 ---------- */
-const AIM={ptr:null,idx:0,drag:false,keep:0,hold:0,pulse:0,mouse:false};
+const AIM={ptr:null,idx:0,drag:false,was:false,keep:0,hold:0,pulse:0,mouse:false,mode:0};
+try{AIM.mode=localStorage.getItem('aimMode')==='1'?1:0;}catch(_){}
+function setAimMode(m){AIM.mode=m?1:0;try{localStorage.setItem('aimMode',String(AIM.mode));}catch(_){}}
 const AIM_HOLD=[14,0,0,0,30,0,0,0,0,0];     // 놓았을 때 연속 사격 틱 수 (피스톨 2발, 화염 5번)
 const mySlot=()=>APP.mode==='guest'?1:0;
-function aimReset(){AIM.ptr=null;AIM.idx=0;AIM.drag=false;AIM.keep=0;AIM.hold=0;AIM.pulse=0;AIM.mouse=false;}
+function aimReset(){AIM.ptr=null;AIM.idx=0;AIM.drag=false;AIM.was=false;AIM.keep=0;AIM.hold=0;AIM.pulse=0;AIM.mouse=false;}
 function idxOf(dx,dy){let n=Math.round(Math.atan2(dy,dx)/(Math.PI*2)*64);return ((n%64)+64)%64;}
-function autoIdx(){   // 탭(끌지 않음) = 상대 방향 자동 조준
-  const S=APP.S;if(!S)return 0;const me=S.p[mySlot()],o=S.p[1-mySlot()];
-  const dx=o.x-me.x;let dy=(o.y-23)-(me.y-30);
-  if((me.w===2||me.w===8)&&Math.abs(dx)>240)dy-=Math.abs(dx)*.38;     // 포물선 무기는 살짝 위로
-  return idxOf(dx,dy);
+// 자동 조준: 움직이는 상대를 예측해서 겨눔 · 포물선 무기는 맞는 각도를 계산
+function smartIdx(){
+  const S=APP.S;if(!S)return 0;const me=S.p[mySlot()],o=S.p[1-mySlot()],w=me.w;
+  const mx=me.x,my=me.y-30;let tx=o.x,ty=o.y-23;
+  if(w===2||w===8){
+    const sp=WP[w].sp;let best=0,bd=1e9;
+    for(let i=0;i<64;i++){
+      let x=mx+AIMX[i]*26,y=my+AIMY[i]*26,vx=AIMX[i]*sp,vy=AIMY[i]*sp-2.5;
+      for(let t=0;t<200;t++){x+=vx;y+=vy;vy+=.28;if(vy>0&&y>=ty){const tt=clamp(o.x+clamp(o.vx,-6,6)*(t+1)*.9,14,946),d=Math.abs(x-tt);if(d<bd){bd=d;best=i;}break;}if(y>FLOOR+30)break;}
+    }
+    if(bd<1e8)return best;
+  }
+  const sp=w===3?21:(w===7?9:(WP[w].sp||12));
+  for(let k=0;k<2;k++){const dd=Math.hypot(tx-mx,ty-my),t=dd/sp;tx=o.x+clamp(o.vx,-6,6)*t*.9;if(tx<14)tx=14;if(tx>946)tx=946;}
+  return idxOf(tx-mx,ty-my);
 }
+function autoIdx(){return smartIdx();}
 function mouseAimIdx(o){   // 마우스: 내 캐릭터 → 커서 방향
   const S=APP.S;if(!S)return AIM.idx;const me=S.p[mySlot()];
   const lx=(o.x-OX)/SC,ly=(o.y-OY)/SC,dx=lx-me.x,dy=ly-(me.y-30);
@@ -123,14 +136,16 @@ function aimLive(){   // 지금 조준 중인 방향 (없으면 -1)
 function finishAim(o){
   const S=APP.S;const w=S?S.p[mySlot()].w:0;
   let idx=AIM.idx;
+  if(o.z==='aim'&&AIM.was&&!AIM.drag&&w!==3){AIM.ptr=null;AIM.keep=0;AIM.was=false;return;}   // 끌었다가 중앙으로 되돌리면 발사 취소
   if(o.z==='maim')idx=mouseAimIdx(o);else idx=AIM.drag?AIM.idx:autoIdx();
-  AIM.idx=idx;AIM.ptr=null;AIM.keep=40;
-  if(w!==3){AIM.pulse=1;AIM.hold=AIM_HOLD[w]||0;}
+  const held=AIM.mode===1&&(AIM.drag||o.z==='maim'&&AIM.drag);     // 연사 모드로 쏘고 있었으면 놓을 때 추가 발사 없음
+  AIM.idx=idx;AIM.ptr=null;AIM.keep=40;AIM.was=false;
+  if(w!==3&&!held){AIM.pulse=1;AIM.hold=AIM_HOLD[w]||0;try{if(navigator.vibrate&&o.z==='aim')navigator.vibrate(12);}catch(_){}}
 }
 function aimBits(){
   const S=APP.S;const w=S?S.p[mySlot()].w:0;let b=0;
   if(AIM.ptr!==null){
-    const i=aimLive();if(i>=0){AIM.idx=i;b|=BIT.AIM|(i<<11);if(w===3)b|=BIT.S;}   // 저격총은 누르는 동안 차징
+    const i=aimLive();if(i>=0){AIM.idx=i;b|=BIT.AIM|(i<<11);if(w===3||(AIM.mode===1&&AIM.drag))b|=BIT.S;}   // 저격총은 누르는 동안 차징 · 연사 모드는 끌고 있는 동안 계속 발사
   }else if(AIM.keep>0){
     AIM.keep--;b|=BIT.AIM|(AIM.idx<<11);
     if(AIM.hold>0){b|=BIT.S;AIM.hold--;AIM.pulse=0;}else if(AIM.pulse){b|=BIT.S;AIM.pulse=0;}
@@ -141,7 +156,7 @@ function updateTouchBits(){
   touchBits=0;const L=tLayout();
   for(const o of tp.values()){
     if(o.z==='aim'){const R=L.btns[0].r*1.45,dx=o.x-o.ox,dy=o.y-o.oy;
-      if(dx*dx+dy*dy>(R*.3)*(R*.3)){AIM.drag=true;AIM.idx=idxOf(dx,dy);}continue;}
+      if(dx*dx+dy*dy>(R*.3)*(R*.3)){AIM.drag=true;AIM.was=true;AIM.idx=idxOf(dx,dy);}else AIM.drag=false;continue;}
     if(o.z==='maim')continue;
     if(o.z==='stick'){const dx=(o.x-o.ox)/L.stick.r,dy=(o.y-o.oy)/L.stick.r;
       if(dx<-.35)touchBits|=BIT.L;if(dx>.35)touchBits|=BIT.R;if(dy<-.4)touchBits|=BIT.U;if(dy>.4)touchBits|=BIT.D;}
@@ -195,12 +210,12 @@ cv.addEventListener('pointerdown',e=>{
     const L=tLayout();let z=null,ox=0,oy=0;
     if(sx<SW*.4&&sy>SH*.3){z='stick';const near=dist(sx,sy,L.stick.x,L.stick.y)<L.stick.r*1.4;ox=near?L.stick.x:sx;oy=near?L.stick.y:sy;}
     else for(const b of L.btns){
-      if(b.k==='shoot'){if(dist(sx,sy,b.x,b.y)<b.r*1.35){z='aim';ox=b.x;oy=b.y;AIM.ptr=e.pointerId;AIM.drag=false;AIM.keep=0;AIM.hold=0;AIM.pulse=0;break;}continue;}
+      if(b.k==='shoot'){if(dist(sx,sy,b.x,b.y)<b.r*1.35){z='aim';ox=b.x;oy=b.y;AIM.ptr=e.pointerId;AIM.drag=false;AIM.was=false;AIM.keep=0;AIM.hold=0;AIM.pulse=0;break;}continue;}
       if(dist(sx,sy,b.x,b.y)<b.r*1.3){z=b.b;tlatch.v=(tlatch.v|0)|b.b;break;}
     }
     tp.set(e.pointerId,{x:sx,y:sy,z,ox,oy});updateTouchBits();try{cv.setPointerCapture(e.pointerId);}catch(_){}
   }else if(APP.scene==='play'&&!PTR.touch&&e.button===0&&!APP.paused&&!APP.oppLeft&&APP.S){   // 마우스: 누른 채 조준 → 떼면 발사
-    tp.set(e.pointerId,{x:sx,y:sy,z:'maim',ox:0,oy:0});AIM.ptr=e.pointerId;AIM.mouse=true;AIM.drag=false;AIM.keep=0;AIM.hold=0;AIM.pulse=0;
+    tp.set(e.pointerId,{x:sx,y:sy,z:'maim',ox:0,oy:0});AIM.ptr=e.pointerId;AIM.mouse=true;AIM.drag=false;AIM.was=false;AIM.keep=0;AIM.hold=0;AIM.pulse=0;
     try{cv.setPointerCapture(e.pointerId);}catch(_){}
   }
 });
@@ -1083,7 +1098,7 @@ function drawHUD(){
 }
 function drawPause(){
   ctx.fillStyle='rgba(30,16,6,.62)';ctx.fillRect(0,0,W,H);
-  const x=W/2-190,y=108,w=380,h=324;
+  const x=W/2-190,y=92,w=380,h=372;
   ctx.fillStyle='rgba(50,25,8,.3)';rr(x+4,y+8,w,h,20);ctx.fill();
   ctx.fillStyle='#f6e6c2';rr(x,y,w,h,20);ctx.fill();ctx.lineWidth=4;ctx.strokeStyle='#6b4423';ctx.stroke();
   txt('일시정지',W/2,y+38,34,'#3b2210',null,'900');
@@ -1093,6 +1108,7 @@ function drawPause(){
   const hw=canFS?(w-90)/2:w-80;
   btn(x+40,y+252,hw,46,muted?'소리 켜기':'소리 끄기',()=>{muted=!muted;},{icon:muted?'mute':'sound',size:16,col:'#f1d9a8',dark:'#c9ae78'});
   if(canFS)btn(x+50+hw,y+252,hw,46,'전체화면',toggleFS,{icon:'full',size:16,col:'#f1d9a8',dark:'#c9ae78'});
+  btn(x+40,y+308,w-80,46,AIM.mode?'조준: 누르는 동안 연사':'조준: 놓으면 발사',()=>setAimMode(AIM.mode?0:1),{size:17,col:'#ffe9b8',dark:'#d4a954'});
 }
 // 저격총 차징 게이지 · 풀차징 조준선 · 저격 표시
 function drawMapFx(S){
@@ -1137,19 +1153,61 @@ function drawMapFx(S){
     txt('맵 기믹 · '+M.n,480,386,16,'#ffd34d',null,'900');txt(M.g,480,408,14,'#fff');ctx.restore();
   }
 }
-// 조준선 (끌고 있는 동안만): 직선, 포물선 무기는 궤적
+// 조준 예측선: 무기별 실제 탄 물리를 그대로 시뮬레이션 (포물선·튕김·로켓 가속·부메랑 반환점) / 상대에게 닿으면 빨간색
+function aimPaths(S,me,idx){
+  const w=me.w,ax=AIMX[idx],ay=AIMY[idx],mx=me.x+ax*26,my=me.y-30+ay*26,o=S.p[1-me.i];
+  const P={sp:13,life:75,r:5,g:0,vy0:0,bounce:0,acc:0,rev:0,land:0,band:0};
+  if(w===3)Object.assign(P,{sp:21,life:45,r:4});
+  else if(w===1)Object.assign(P,{sp:11,life:22});
+  else if(w===2)Object.assign(P,{sp:8,life:150,r:8,g:.28,vy0:-2.5,land:1});
+  else if(w===4)Object.assign(P,{sp:6.5,life:15,r:7,band:1});
+  else if(w===5)Object.assign(P,{sp:9,life:85,r:6,bounce:1});
+  else if(w===6)Object.assign(P,{sp:10,life:90,r:9,rev:28});
+  else if(w===7)Object.assign(P,{sp:5,life:90,r:9,acc:1,land:2});
+  else if(w===8)Object.assign(P,{sp:7,life:140,r:7,g:.28,vy0:-2.5,land:1});
+  else if(w===9)Object.assign(P,{sp:15,life:70,r:4});
+  const dirs=w===1?[-1,0,1]:[0];const out=[];let hit=false;
+  for(const k of dirs){
+    let dx=ax,dy=ay;if(k){const s=k*.19867,c=.98007;dx=ax*c-ay*s;dy=ax*s+ay*c;}
+    let x=mx,y=my,vx=dx*P.sp,vy=dy*P.sp+P.vy0,bn=0;const pts=[[x,y]];let end=null;
+    for(let t=1;t<=Math.min(P.life,240);t++){
+      if(P.acc&&t<28){vx*=1.03;vy*=1.03;}
+      const oy=y;x+=vx;y+=vy;vy+=P.g;
+      if(P.bounce&&bn<3){
+        if(x<8&&vx<0){x=8;vx=-vx;bn++;end=[x,y,'b'];}else if(x>952&&vx>0){x=952;vx=-vx;bn++;end=[x,y,'b'];}
+        if(vy>0){if(y+P.r>=FLOOR){y=FLOOR-P.r;vy=-vy;bn++;end=[x,y,'b'];}
+          else for(const pl of S.pl){if(x>pl[0]&&x<pl[0]+pl[2]&&oy+P.r<=pl[1]&&y+P.r>=pl[1]){y=pl[1]-P.r;vy=-vy;bn++;end=[x,y,'b'];break;}}}
+        else if(y<20&&vy<0){y=20;vy=-vy;bn++;end=[x,y,'b'];}
+      }
+      pts.push([x,y]);
+      if(x>o.x-12-P.r&&x<o.x+12+P.r&&y>o.y-46-P.r&&y<o.y+P.r){hit=true;if(!P.band)break;}
+      if(x<-20||x>980||y<-120)break;
+      if(P.land===1&&vy>0){let l=y+P.r>=FLOOR;if(!l)for(const pl of S.pl){if(x>pl[0]&&x<pl[0]+pl[2]&&oy+P.r<=pl[1]&&y+P.r>=pl[1]){l=true;break;}}if(l){end=[x,y,'l'];break;}}
+      if(P.land===2){let l=y+P.r>=FLOOR;if(!l)for(const pl of S.pl){if(x>pl[0]&&x<pl[0]+pl[2]&&y>=pl[1]&&y<=pl[1]+14){l=true;break;}}if(l){end=[x,y,'l'];break;}}
+      if(P.rev&&t>=P.rev){end=[x,y,'r'];break;}
+    }
+    out.push({pts,end});
+  }
+  return{paths:out,hit,band:P.band,r:P.r,w};
+}
 function drawAimLine(S){
   const i=aimLive();if(i<0)return;
   if(!(AIM.drag||AIM.mouse))return;
   const me=S.p[mySlot()];if(me.hp<=0)return;
-  const w=me.w,ax=AIMX[i],ay=AIMY[i],mx=me.x+ax*26,my=me.y-30+ay*26,col=WCOL[w];
-  ctx.save();ctx.lineWidth=3;ctx.strokeStyle='rgba(255,255,255,.85)';ctx.setLineDash([9,7]);ctx.lineCap='round';
-  ctx.beginPath();ctx.moveTo(mx,my);
-  let ex=mx,ey=my;
-  if(w===2||w===8){let x=mx,y=my,vx=ax*WP[w].sp,vy=ay*WP[w].sp-2.5;for(let t=0;t<130;t++){x+=vx;y+=vy;vy+=.28;ctx.lineTo(x,y);ex=x;ey=y;if(y>=FLOOR||x<0||x>960)break;}}
-  else{const len=w===4?100:(w===1?190:(w===6?260:(w===5?420:(w===7?520:700))));ex=mx+ax*len;ey=my+ay*len;ctx.lineTo(ex,ey);}
-  ctx.stroke();ctx.setLineDash([]);
-  ctx.fillStyle=col;ctx.strokeStyle='#4a2f17';ctx.lineWidth=2;ctx.beginPath();ctx.arc(ex,ey,7,0,7);ctx.fill();ctx.stroke();
+  const A=aimPaths(S,me,i),col=WCOL[me.w];
+  const lc=A.hit?'#ff4a3a':'#ffffff';
+  ctx.save();ctx.lineCap='round';ctx.lineJoin='round';
+  for(const pa of A.paths){
+    const pts=pa.pts;
+    if(A.band){ctx.globalAlpha=.25;ctx.strokeStyle=lc;ctx.lineWidth=A.r*2;ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);for(const q of pts)ctx.lineTo(q[0],q[1]);ctx.stroke();ctx.globalAlpha=1;}
+    ctx.strokeStyle=A.hit?'rgba(255,74,58,.95)':'rgba(255,255,255,.85)';ctx.lineWidth=3;ctx.setLineDash([9,7]);
+    ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);for(const q of pts)ctx.lineTo(q[0],q[1]);ctx.stroke();ctx.setLineDash([]);
+    const e=pts[pts.length-1];
+    if(pa.end&&pa.end[2]==='l'){ctx.strokeStyle='#ff9a3c';ctx.lineWidth=3;ctx.beginPath();ctx.ellipse(e[0],e[1],18,7,0,0,7);ctx.stroke();}
+    ctx.fillStyle=col;ctx.strokeStyle='#4a2f17';ctx.lineWidth=2;ctx.beginPath();ctx.arc(e[0],e[1],6,0,7);ctx.fill();ctx.stroke();
+  }
+  if(A.hit){const o=S.p[1-me.i];ctx.strokeStyle='#ff4a3a';ctx.lineWidth=3;ctx.beginPath();ctx.arc(o.x,o.y-23,34,0,7);ctx.stroke();}
+  if(AIM.mouse&&AIM.ptr!==null){const o=tp.get(AIM.ptr);if(o){const lx=(o.x-OX)/SC,ly=(o.y-OY)/SC;ctx.strokeStyle='rgba(255,255,255,.9)';ctx.lineWidth=2;ctx.beginPath();ctx.arc(lx,ly,9,0,7);ctx.moveTo(lx-14,ly);ctx.lineTo(lx-5,ly);ctx.moveTo(lx+5,ly);ctx.lineTo(lx+14,ly);ctx.moveTo(lx,ly-14);ctx.lineTo(lx,ly-5);ctx.moveTo(lx,ly+5);ctx.lineTo(lx,ly+14);ctx.stroke();}}
   ctx.restore();
 }
 function drawSniper(S){
@@ -1199,7 +1257,7 @@ function drawTouch(){
     ctx.globalAlpha=.28;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(b.x,b.y,R,0,7);ctx.fill();ctx.globalAlpha=.7;ctx.lineWidth=3;ctx.strokeStyle='#fff';ctx.stroke();
     let kx=b.x,ky=b.y;if(ao){const dx=ao.x-b.x,dy=ao.y-b.y,dd=Math.hypot(dx,dy)||1,m=Math.min(dd,R);kx+=dx/dd*m;ky+=dy/dd*m;}
     ctx.globalAlpha=ao?.95:.7;ctx.fillStyle=ao&&AIM.drag?'#ff6b3a':'#e8893a';ctx.beginPath();ctx.arc(kx,ky,b.r*.75,0,7);ctx.fill();ctx.lineWidth=2.5;ctx.strokeStyle='rgba(60,30,10,.6)';ctx.stroke();
-    ctx.globalAlpha=.95;txt('조준',kx,ky+1,Math.max(11,b.r*.55),'#3b2210');}
+    ctx.globalAlpha=.95;{const sw=APP.S?APP.S.p[mySlot()].w:0;txt(ao&&AIM.was&&!AIM.drag&&sw!==3?'취소':'조준',kx,ky+1,Math.max(11,b.r*.55),'#3b2210');}}
   for(const b of L.btns){if(b.k==='shoot')continue;const on=(touchBits&b.b)!==0;ctx.globalAlpha=on?.8:.4;ctx.fillStyle=on?'#ffe14d':'#fff';ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,7);ctx.fill();
     ctx.lineWidth=2.5;ctx.strokeStyle='rgba(60,30,10,.6)';ctx.stroke();ctx.globalAlpha=.95;txt(b.l,b.x,b.y+1,Math.max(11,b.r*.55),'#3b2210');}
   ctx.restore();
@@ -1254,7 +1312,7 @@ function drawMenu(){
   btn(24,474,52,46,'',()=>{APP.showHelp=true;},{icon:'help',col:'#f1d9a8',dark:'#c9ae78',r:12});
   btn(86,474,52,46,'',()=>{muted=!muted;},{icon:muted?'mute':'sound',col:'#f1d9a8',dark:'#c9ae78',r:12});
   if(canFS)btn(W-76,474,52,46,'',toggleFS,{icon:'full',col:'#f1d9a8',dark:'#c9ae78',r:12});
-  txt('v2.8 · 랜덤 없음 · 모든 조건 대칭',W/2,H-20,13,'#f7e3bd');
+  txt('v2.9 · 랜덤 없음 · 모든 조건 대칭',W/2,H-20,13,'#f7e3bd');
   if(APP.showHelp)drawHelp();
 }
 function drawHelp(){
@@ -1270,8 +1328,8 @@ function drawHelp(){
     '패링: 상대 탄이 닿는 순간 누르면 탄이 되돌아가요 (EX 탄은 불가) · 헛치면 약 0.75초간 무방비',
     '대시: 시작 후 잠깐 무적이라 탄을 뚫고 지나갈 수 있어요 · 공중 대시는 착지 전 1번',
     'EX: 맞히거나 맞으면 게이지가 차고, 가득 차면 무기별 EX 발동 · ↓+점프 = 발판 내려가기',
-    '조준: 마우스를 누른 채 방향을 잡고 떼면 발사 · 폰은 오른쪽 큰 조준 버튼을 끌었다 놓기 (그냥 탭 = 자동 조준)'];
-  L.forEach((s,i)=>txt(s,W/2,py+350+i*24,14,'#5a3a1e'));
+    '조준: 끌었다 놓으면 발사 · 탭 = 자동 조준 · 중앙으로 되돌리면 취소 · 방식은 로비/일시정지에서'];
+  L.forEach((s,i)=>txt(s,W/2,py+334+i*21,13,'#5a3a1e'));
   buttons.push({x:0,y:0,w:W,h:H,fn:()=>{APP.showHelp=false;},enabled:true});
   btn(W/2-80,py+ph-46,160,38,'닫기',()=>{APP.showHelp=false;},{size:18,col:'#f1d9a8',dark:'#c9ae78'});
 }
@@ -1317,6 +1375,7 @@ function drawLobby(){
   ctx.drawImage(bgc,0,0);motes();
   const guest=APP.mode==='guest',host=APP.mode==='host',online=guest||host,bot=APP.mode==='bot';
   btn(16,12,140,46,'처음으로',goMenu,{size:18,col:'#f1d9a8',dark:'#c9ae78',icon:'back'});
+  btn(W-216,12,200,42,AIM.mode?'조준: 누르는 동안 연사':'조준: 놓으면 발사',()=>setAimMode(AIM.mode?0:1),{size:14,col:'#ffe9b8',dark:'#d4a954',r:12});
   const title={bot:'봇 연습',local:'로컬 대결',host:'온라인 대결 · 방장',guest:'온라인 대결 · 참가'}[APP.mode]||'';
   txt(title,W/2,36,34,'#fff',null,'900',{w:9,c:'#6b2a14'});
   const bad=net.status&&/없어요|초과|오류|끊|못했|버전/.test(net.status);
